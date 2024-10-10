@@ -12,7 +12,7 @@ const server = http.createServer(app);
 
 // Enable CORS for Express HTTP requests
 app.use(cors({
-    origin: ['http://localhost:3000', 'http://192.168.1.17:3000'],
+    origin: ['https://client-real-time-collab-playground-for-code.vercel.app/?vercelToolbarCode=2d1IRCbPLrwh_Wa','https://client-real-time-collab-playground-for-code.vercel.app','http://localhost:3000', 'http://192.168.1.17:3000'],
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     credentials: true,
 }));
@@ -20,7 +20,7 @@ app.use(cors({
 // Set up the Socket.io server with CORS configuration
 const io = new Server(server, {
     cors: {
-        origin: ['http://localhost:3000', 'http://192.168.1.17:3000'],
+        origin: ['https://client-real-time-collab-playground-for-code.vercel.app/?vercelToolbarCode=2d1IRCbPLrwh_Wa','https://client-real-time-collab-playground-for-code.vercel.app','http://localhost:3000', 'http://192.168.1.17:3000'],
         methods: ['GET', 'POST'],
     }
 });
