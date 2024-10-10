@@ -27,6 +27,9 @@ const io = new Server(server, {
 
 // Middleware to parse JSON requests
 app.use(express.json());
+app.get('/', (req, res) => {
+    res.send('Welcome to the Real-time Code Playground!');
+});
 
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
