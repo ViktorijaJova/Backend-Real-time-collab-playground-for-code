@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import http from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
+import { VM } from 'vm2'; // Add vm2 for code execution
 
 dotenv.config();
 
@@ -20,7 +21,6 @@ app.use(cors({
     credentials: true,
 }));
 
-// Set up the Socket.io server with CORS configuration
 const io = new Server(server, {
     cors: {
         origin: [
@@ -46,48 +46,14 @@ const pool = new Pool({
     },
 });
 
-
-
-
-
-dotenv.config();
-
-
-// Enable CORS for Express HTTP requests
-app.use(cors({
-    origin: ['https://client-real-time-collab-playground-for-code.vercel.app/?vercelToolbarCode=2d1IRCbPLrwh_Wa','https://client-real-time-collab-playground-for-code.vercel.app','http://localhost:3000', 'http://192.168.1.17:3000'],
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    credentials: true,
-}));
-
-// Set up the Socket.io server with CORS configuration
-
-
-// Middleware to parse JSON requests
-app.use(express.json());
-app.get('/', (req, res) => {
-    res.send('Welcome to the Real-time Code Playground!');
-});
-
-
-
-
-app.use(cors());
-app.use(express.json());
-app.use(cors({
-    origin: [
-        'http://localhost:3000', // Local development
-        'https://client-real-time-collab-playground-for-code.vercel.app', // Production
-    ],
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    credentials: true,
-}));
-
 // Create a session
-app.post('/api/sessions', async (req: any, res: any) => {
+app.post('/api/sessions', async (req, res) => {
     const { creatorId, code } = req.body;
     try {
-        const result = await pool.query('INSERT INTO sessions (creator_id, code) VALUES ($1, $2) RETURNING *', [creatorId, code]);
+        const result = await pool.query(
+            'INSERT INTO sessions (creator_id, code, role) VALUES ($1, $2, $3) RETURNING *',
+            [creatorId, code, 'creator'] // Set role to 'creator'
+        );
         res.json(result.rows[0]);
     } catch (error) {
         console.error('Error creating session:', error);
@@ -96,7 +62,7 @@ app.post('/api/sessions', async (req: any, res: any) => {
 });
 
 // Get a session by ID
-app.get('/api/sessions/:id', async (req: any, res: any) => {
+app.get('/api/sessions/:id', async (req, res) => {
     const { id } = req.params;
     try {
         const result = await pool.query('SELECT * FROM sessions WHERE id = $1', [id]);
@@ -108,7 +74,7 @@ app.get('/api/sessions/:id', async (req: any, res: any) => {
 });
 
 // Update session code
-app.put('/api/sessions/:id', async (req: any, res: any) => {
+app.put('/api/sessions/:id', async (req, res) => {
     const { id } = req.params;
     const { code } = req.body;
     try {
@@ -121,15 +87,15 @@ app.put('/api/sessions/:id', async (req: any, res: any) => {
 });
 
 // Socket.io connection
-io.on('connection', (socket: any) => {
+io.on('connection', (socket) => {
     console.log('A user connected');
 
     // Join a session
-    socket.on('joinSession', (sessionId: any) => {
+    socket.on('joinSession', (sessionId) => {
         socket.join(sessionId);
         console.log(`User joined session: ${sessionId}`);
-        
-        // Here you can emit the current code to the user who just joined
+
+        // Emit the current code to the user who just joined
         pool.query('SELECT code FROM sessions WHERE id = $1', [sessionId])
             .then(result => {
                 socket.emit('codeChange', result.rows[0].code);
@@ -140,7 +106,7 @@ io.on('connection', (socket: any) => {
     });
 
     // Handle code change events
-    socket.on('codeChange', ({ sessionId, code }: any) => {
+    socket.on('codeChange', ({ sessionId, code }) => {
         console.log(`Code change in session ${sessionId}: ${code}`);
         
         // Broadcast the change to all clients in the session
@@ -153,6 +119,35 @@ io.on('connection', (socket: any) => {
             });
     });
 
+    // Handle running code
+    socket.on('runCode', (sessionId: string, code: string) => {
+        const vm = new VM();
+        let output = '';
+    
+        try {
+            // Capture console.log output
+            const oldLog = console.log;
+            console.log = (msg) => {
+                output += msg + '\n'; // Append output
+            };
+    
+            // Execute the user's code
+            vm.run(code);
+    
+            // Restore console.log
+            console.log = oldLog;
+        } catch (error) {
+            if (error instanceof Error) {
+                output = `Error: ${error.message}`;
+            } else {
+                output = 'Error: An unknown error occurred.';
+            }
+        }
+    
+        // Emit the output to the specific user who requested to run the code
+        socket.emit('codeOutput', output);
+    });
+
     socket.on('disconnect', () => {
         console.log('A user disconnected');
     });
@@ -161,4 +156,5 @@ io.on('connection', (socket: any) => {
 // Start the server
 const PORT = process.env.PORT || 4000;
 server.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);});
+    console.log(`Server is running on port ${PORT}`);
+});
