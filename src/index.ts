@@ -48,7 +48,6 @@ const pool = new Pool({
 
 app.post('/api/sessions', async (req, res) => {
     const { creatorId, code } = req.body;
-    console.log('Creating session with creatorId:', creatorId, 'and initial code:', code);
     try {
         const result = await pool.query(
             'INSERT INTO sessions (creator_id, code) VALUES ($1, $2) RETURNING *',
@@ -69,35 +68,19 @@ app.post('/api/sessions', async (req, res) => {
     }
 });
 
-// Get a session by ID
-// app.get('/api/sessions/:id', async (req, res) => {
-//     const { id } = req.params;
-//     console.log('Fetching session with ID:', id);
-//     try {
-//         const result = await pool.query('SELECT * FROM sessions WHERE id = $1', [id]);
-//         console.log('Fetched session:', result.rows[0]);
-//         res.json(result.rows[0]);
-//     } catch (error) {
-//         console.error('Error fetching session:', error);
-//         res.status(500).json({ error: 'Failed to fetch session' });
-//     }
-// });
-
 app.get('/api/sessions/:id', async (req, res) => {
     const sessionId = req.params.id;
 
     try {
         const sessionResult = await pool.query('SELECT * FROM sessions WHERE id = $1', [sessionId]);
         const session = sessionResult.rows[0];
-
-        // Assuming you have a separate participants table
         const creatorResult = await pool.query('SELECT user_name FROM participants WHERE session_id = $1 AND role = $2', [sessionId, 'creator']);
         const creatorName = creatorResult.rows[0]?.user_name || 'Unknown';
 
         res.json({
             id: session.id,
             code: session.code,
-            userName: creatorName, // Include the creator's username in the response
+            userName: creatorName, 
         });
     } catch (error) {
         console.error('Error fetching session:', error);
@@ -109,11 +92,10 @@ app.get('/api/sessions/:id', async (req, res) => {
 // Kick a participant
 app.delete('/api/sessions/:sessionId/participants/:userName', async (req, res) => {
     const { sessionId, userName } = req.params;
-    console.log(`Kicking participant ${userName} from session ${sessionId}`);
     try {
         await pool.query('DELETE FROM participants WHERE session_id = $1 AND user_name = $2', [sessionId, userName]);
         console.log(`Participant ${userName} kicked from session ${sessionId}`);
-        res.sendStatus(204); // No content
+        res.sendStatus(204); 
     } catch (error) {
         console.error('Error kicking participant:', error);
         res.status(500).json({ error: 'Failed to kick participant' });
@@ -127,7 +109,7 @@ app.put('/api/sessions/:id/lock', async (req, res) => {
     try {
         await pool.query('UPDATE sessions SET locked = TRUE WHERE id = $1', [id]);
         console.log(`Session ${id} locked`);
-        res.sendStatus(204); // No content
+        res.sendStatus(204); 
     } catch (error) {
         console.error('Error locking session:', error);
         res.status(500).json({ error: 'Failed to lock session' });
@@ -152,10 +134,8 @@ app.put('/api/sessions/:id/unlock', async (req, res) => {
 app.put('/api/sessions/:id', async (req, res) => {
     const { id } = req.params;
     const { code } = req.body;
-    console.log(`Updating code for session ${id}:`, code);
     try {
         await pool.query('UPDATE sessions SET code = $1 WHERE id = $2', [code, id]);
-        console.log(`Code updated for session ${id}`);
         res.sendStatus(204); // No content
     } catch (error) {
         console.error('Error updating session:', error);
@@ -177,9 +157,7 @@ io.on('connection', (socket) => {
     
         socket.join(sessionId);
         const validUserName = userName || 'Guest'; // Default username if none provided
-    
-        console.log(`User ${socket.id} (${validUserName}) joined session: ${sessionId}`);
-    
+        
         pool.query('INSERT INTO participants (session_id, user_name, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [sessionId, validUserName, 'participant'])
             .then(() => {
                 // Emit to other participants
@@ -201,24 +179,19 @@ io.on('connection', (socket) => {
     // Handle code change events
     socket.on('codeChange', ({ sessionId, code }) => {
         console.log(`Code change in session ${sessionId}: ${code}`);
-        
         // Broadcast the change to all clients in the session
         socket.to(sessionId).emit('codeChange', code);
-        
-        // Optionally, update the code in the database
-        pool.query('UPDATE sessions SET code = $1 WHERE id = $2', [code, sessionId])
+            pool.query('UPDATE sessions SET code = $1 WHERE id = $2', [code, sessionId])
             .catch(error => {
                 console.error('Error updating code in session:', error);
             });
     });
 
     socket.on('kickParticipant', (sessionId, userName) => {
-        console.log(`Kicking participant ${userName} from session ${sessionId} via socket`);
         pool.query('DELETE FROM participants WHERE session_id = $1 AND user_name = $2', [sessionId, userName])
             .then(() => {
                 // Notify all users in the session that a participant has been kicked
                 socket.to(sessionId).emit('participantKicked', userName);
-                console.log(`Participant ${userName} kicked from session ${sessionId}`);
             })
             .catch(error => {
                 console.error('Error kicking participant via socket:', error);
@@ -248,6 +221,10 @@ io.on('connection', (socket) => {
                 console.error('Error unlocking session via socket:', error);
             });
     });
+
+    socket.on("typing", ({ role, userName }) => {
+        socket.broadcast.emit("typingIndicator", { userName }); // Send to all clients except the sender
+      });
 
     // Handle running code
     // socket.on('runCode', (sessionId: string, code: string) => {
