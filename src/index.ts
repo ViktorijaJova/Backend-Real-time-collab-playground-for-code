@@ -46,20 +46,19 @@ const pool = new Pool({
     },
 });
 
-// Create a session
 app.post('/api/sessions', async (req, res) => {
     const { creatorId, code } = req.body;
     console.log('Creating session with creatorId:', creatorId, 'and initial code:', code);
     try {
         const result = await pool.query(
-            'INSERT INTO sessions (creator_id, code, role) VALUES ($1, $2, $3) RETURNING *',
-            [creatorId, code, 'creator']
+            'INSERT INTO sessions (creator_id, code) VALUES ($1, $2) RETURNING *',
+            [creatorId, code]
         );
         console.log('Session created:', result.rows[0]);
 
         // Insert creator as a participant
         await pool.query(
-            'INSERT INTO participants (session_id, user_name, role) VALUES ($1, $2, $3)',
+            'INSERT INTO participants (session_id, user_name, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
             [result.rows[0].id, creatorId, 'creator']
         );
 
@@ -71,18 +70,41 @@ app.post('/api/sessions', async (req, res) => {
 });
 
 // Get a session by ID
+// app.get('/api/sessions/:id', async (req, res) => {
+//     const { id } = req.params;
+//     console.log('Fetching session with ID:', id);
+//     try {
+//         const result = await pool.query('SELECT * FROM sessions WHERE id = $1', [id]);
+//         console.log('Fetched session:', result.rows[0]);
+//         res.json(result.rows[0]);
+//     } catch (error) {
+//         console.error('Error fetching session:', error);
+//         res.status(500).json({ error: 'Failed to fetch session' });
+//     }
+// });
+
 app.get('/api/sessions/:id', async (req, res) => {
-    const { id } = req.params;
-    console.log('Fetching session with ID:', id);
+    const sessionId = req.params.id;
+
     try {
-        const result = await pool.query('SELECT * FROM sessions WHERE id = $1', [id]);
-        console.log('Fetched session:', result.rows[0]);
-        res.json(result.rows[0]);
+        const sessionResult = await pool.query('SELECT * FROM sessions WHERE id = $1', [sessionId]);
+        const session = sessionResult.rows[0];
+
+        // Assuming you have a separate participants table
+        const creatorResult = await pool.query('SELECT user_name FROM participants WHERE session_id = $1 AND role = $2', [sessionId, 'creator']);
+        const creatorName = creatorResult.rows[0]?.user_name || 'Unknown';
+
+        res.json({
+            id: session.id,
+            code: session.code,
+            userName: creatorName, // Include the creator's username in the response
+        });
     } catch (error) {
         console.error('Error fetching session:', error);
-        res.status(500).json({ error: 'Failed to fetch session' });
+        res.status(500).send('Error fetching session data.');
     }
 });
+
 
 // Kick a participant
 app.delete('/api/sessions/:sessionId/participants/:userName', async (req, res) => {
@@ -145,21 +167,36 @@ app.put('/api/sessions/:id', async (req, res) => {
 io.on('connection', (socket) => {
     console.log('A user connected:', socket.id);
 
-    // Join a session
-    socket.on('joinSession', (sessionId) => {
+    socket.on('joinSession', (sessionId, userName, role) => {
+        // Ensure the creator isn't added again as a participant
+        if (role === 'creator') {
+            console.log(`Creator ${userName} joined session ${sessionId}`);
+            socket.join(sessionId);
+            return;
+        }
+    
         socket.join(sessionId);
-        console.log(`User ${socket.id} joined session: ${sessionId}`);
-
-        // Emit the current code to the user who just joined
-        pool.query('SELECT code FROM sessions WHERE id = $1', [sessionId])
+        const validUserName = userName || 'Guest'; // Default username if none provided
+    
+        console.log(`User ${socket.id} (${validUserName}) joined session: ${sessionId}`);
+    
+        pool.query('INSERT INTO participants (session_id, user_name, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [sessionId, validUserName, 'participant'])
+            .then(() => {
+                // Emit to other participants
+                socket.to(sessionId).emit('participantJoined', validUserName);
+    
+                return pool.query('SELECT user_name FROM participants WHERE session_id = $1', [sessionId]);
+            })
             .then(result => {
-                socket.emit('codeChange', result.rows[0].code);
-                console.log(`Emitting current code to user ${socket.id} for session ${sessionId}`);
+                const participants = result.rows.map(row => row.user_name);
+                socket.emit('currentParticipants', participants);
             })
             .catch(error => {
-                console.error('Error fetching code for session:', error);
+                console.error('Error managing participants:', error);
             });
     });
+
+
 
     // Handle code change events
     socket.on('codeChange', ({ sessionId, code }) => {
