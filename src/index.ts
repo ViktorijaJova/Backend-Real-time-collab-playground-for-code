@@ -4,8 +4,12 @@ import dotenv from 'dotenv';
 import http from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
-import { VM } from 'vm2';
+import { VM } from 'vm2'; // Ensure you have this import at the top of your file
 
+const vm = new VM({
+  timeout: 1000, // Set a timeout for code execution (optional)
+  // You can set other options here, such as sandboxed environment settings
+});
 dotenv.config();
 
 const app = express();
@@ -225,37 +229,46 @@ io.on('connection', (socket) => {
     socket.on("typing", ({ role, userName }) => {
         socket.broadcast.emit("typingIndicator", { userName }); // Send to all clients except the sender
       });
-
-    // Handle running code
-    // socket.on('runCode', (sessionId: string, code: string) => {
-    //     console.log(`Running code in session ${sessionId}:`, code);
-    //     const vm = new VM();
-    //     let output = '';
+      socket.on("runCode", (data) => {
+        const { sessionId, code } = data;
     
-    //     try {
-    //         // Capture console.log output
-    //         const oldLog = console.log;
-    //         console.log = (msg) => {
-    //             output += msg + '\n'; // Append output
-    //         };
+        // Create a variable to hold console output
+        const consoleOutput: string[] = [];
     
-    //         // Wrap the code execution to catch any errors
-    //         vm.run(`(function() { ${code} })();`);
+        const vm = new VM({
+            sandbox: {
+                console: {
+                    log: (...args: any[]) => {
+                        consoleOutput.push(args.join(' '));
+                    },
+                    error: (...args: any[]) => {
+                        consoleOutput.push('Error: ' + args.join(' '));
+                    },
+                },
+            },
+        });
     
-    //         // Restore console.log
-    //         console.log = oldLog;
-    //     } catch (error) {
-    //         output = `Error: `;
-    //         console.error('Error executing code:', error);
-    //     }
+        try {
+            // Wrap the user code in an IIFE
+            const wrappedCode = `(function() { ${code} })();`;
+            vm.run(wrappedCode);
+            
+            // Broadcast the output to everyone in the session
+            io.in(sessionId).emit("codeOutput", consoleOutput.join('\n'));
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred';
+            // Broadcast error to everyone in the session
+            io.in(sessionId).emit("codeOutput", `Error: ${errorMessage}`);
+        }
+    });
     
-    //     // Emit the output to the specific user who requested to run the code
-    //     socket.emit('codeOutput', output);
-    //     console.log(`Output from code execution in session ${sessionId}:`, output);
-    // });
+    
+      
+    
 
     socket.on('disconnect', () => {
         console.log('A user disconnected:', socket.id);
+        
     });
 });
 
